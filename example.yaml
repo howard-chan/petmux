@@ -1,0 +1,65 @@
+---
+DEFINES:
+    # These are environment variables that are set in the tmux environment
+    # The are used in the same way you would do in a shell
+    HOME_DIR : ~
+    WORKING_DIR : ~/Documents
+    EDITOR : vi
+
+setup1:
+    # Example of a work environemnt setup
+    NEW_WINDOW: MyWork
+    DESC:  Example of a shell layout for development
+    # SESSION: '0'
+    NEW_PANES:
+        # The window layout is described here
+        - editor:
+            SHELL:
+                - cd ${WORKING_DIR}
+                - ${EDITOR}
+        - vmstat:
+            SHELL:
+                - cd ${OUTPUT_DIR}
+                - watch -n 1 vmstat
+        - top:
+            SPLIT: -v -p 70
+            SHELL:
+                - top
+
+setup2:
+    # Example of a test environment setup
+    NEW_WINDOW: MyTest
+    DESC: Example setup for running "test"
+    # SESSION: '0'
+    NEW_PANES:
+        - pane1:
+            SHELL: echo "P1- I am pane1"
+        - pane2:
+            SPLIT: -h
+            SHELL: echo "P2- I am pane2"
+
+test:
+    TITLE: Test command sequence
+    WINDOW: MyTest
+    CMDS:
+        - PANE: pane1
+          SHELL: echo "P1- Knock knock"
+          PAUSE: 1
+        - PANE: pane2
+          SHELL: echo "P2- Whos there?"
+        - PANE: pane1
+          SHELL: echo "P1- Pane1"
+          CAPTURE: test.log
+        - PANE: pane2
+          DELAY: 1
+          SHELL:
+                - echo "P2- Pane who?"
+                - echo "P2- Oh wait a moment"
+          EXPECT:
+                - echo "this is a test"
+                - this(.*)test
+                - TEST_ENV
+        - SHELL: echo "HC> ${TEST_ENV} ${EDITOR}"
+          PROMPT: ["Let me know when you are ready? ", REPLY]
+        - PANE: pane1
+          SHELL: echo "P1- That was a pane? ${REPLY}"
