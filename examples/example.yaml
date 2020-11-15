@@ -51,15 +51,41 @@ test:
           SHELL: echo "P1- Pane1"
           CAPTURE: test.log
         - PANE: pane2
-          DELAY: 1
+          DELAY: 0.5
           SHELL:
                 - echo "P2- Pane who?"
                 - echo "P2- Oh wait a moment"
-          EXPECT:
+          EXTRACT:
                 - echo "this is a test"
                 - this(.*)test
                 - TEST_ENV
         - SHELL: echo "HC> ${TEST_ENV} ${EDITOR}"
           PROMPT: ["Let me know when you are ready? ", REPLY]
+          DECIDE:
+            KEY: REPLY
+            '1': "test"
+            '2': "tres"
+            '3': 'echo "P2: I have decided"'
+            '4':
+                - 'echo "Hello world"'
+                - 'echo "Times Have Changed"'
+            '5':
+                SEQUENCE: test2
         - PANE: pane1
           SHELL: echo "P1- That was a pane? ${REPLY}"
+
+test2:
+    TITLE: Alternate sequence
+    WINDOW: MyTest
+    CMDS:
+        - SHELL: echo "Trying this sequence"
+          PAUSE: 1
+        - SEQUENCE: test3
+
+test3:
+    TITLE: Alternate sequence
+    WINDOW: MyTest
+    CMDS:
+        - SHELL: echo "We are done now"
+          PAUSE: 1
+        - ABORT: 1

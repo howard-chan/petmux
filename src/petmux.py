@@ -42,11 +42,6 @@ MAG = "\033[1;35m"
 CYN = "\033[1;36m"
 NON = "\033[0m"
 
-#TODO:
-# 1. Document APIs
-# 5. Search for default petmux.yaml as default
-# 8. Add unittest
-
 
 class Tmux:
     """
@@ -72,19 +67,36 @@ class Tmux:
         self.var_dict = {}
 
     def _cmd(self, cmd, delay=0, check_output=False):
-        if self.is_debug:
-            print("    tmux> {}".format(cmd))
         delay = delay if delay else self.cmd_delay
+        if self.is_debug:
+            print("    tmux{}> {}".format( "(dly:{})".format(delay) if delay else "", cmd))
         if delay:
             time.sleep(delay)
+        # Send the tmux command
         if check_output:
             return subprocess.check_output('tmux {}'.format(cmd).split())
         else:
             return os.system('tmux {}'.format(cmd))
 
+    def _get_pane_str(self, pane):
+        """
+        Builds the target string from the session, window and pane.
+
+        :param      pane:  The pane name
+        :type       pane:  string or int
+
+        :returns:   The pane string.
+        :rtype:     str
+        """
+        pane_str = '{}:'.format(self.session_last) if self.session_last else ''
+        pane_str += '{}.'.format(self.window_last) if self.window_last else ''
+        pane = self.window_dict[self.window_last][pane] if pane in self.window_dict[self.window_last] else pane
+        pane_str += '{}'.format(pane) if pane else ''
+        return pane_str
+
     def name_pane(self, window, name, idx):
         """
-        Adds the pane into the window dictionary
+        Associates the name with pane index into the window dictionary
 
         :param      window:  The window name
         :type       window:  str
@@ -100,7 +112,8 @@ class Tmux:
 
     def delay(self, delay):
         """
-        Sets the per command delay in self.shell(...)
+        Sets the per command delay for the group of SHELL commands (via
+        self.shell(...))
 
         :param      delay:  The delay [in S]
         :type       delay:  int
@@ -112,12 +125,21 @@ class Tmux:
         Sets the tmux environment variable and dictionary
 
         :param      key:    The new value
-        :type       key:    { type_description }
+        :type       key:    str
         :param      value:  The value
-        :type       value:  { type_description }
+        :type       value:  str
         """
         self.var_dict[key] = value
         self._cmd("""set-environment %s '%s'""" % (key, value))
+
+    def get_env(self):
+        """
+        Gets the environment variable dictionary
+
+        :returns:   The environment.
+        :rtype:     dict
+        """
+        return self.var_dict
 
     def kill(self, window):
         """
@@ -184,34 +206,18 @@ class Tmux:
         """
         Splits a tmux window
 
-        :param      options:  The options
-        :type       options:  { type_description }
+        :param      options:  The tmux split options
+        :type       options:  str
         """
         self._cmd('split-window %s' % (options if options else ""))
 
-    def _get_pane_str(self, pane):
-        """
-        Builds the target string from the session, window and pane.
-
-        :param      pane:  The pane name
-        :type       pane:  string or int
-
-        :returns:   The pane string.
-        :rtype:     str
-        """
-        pane_str = '{}:'.format(self.session_last) if self.session_last else ''
-        pane_str += '{}.'.format(self.window_last) if self.window_last else ''
-        pane = self.window_dict[self.window_last][pane] if pane in self.window_dict[self.window_last] else pane
-        pane_str += '{}'.format(pane) if pane else ''
-        return pane_str
-
     def shell(self, cmd, pane=None):
         """
-        Sends a shell command to a pane
+        Sends a shell command or list of shell commands to a pane
 
         :param      cmd:   The command string
         :type       cmd:   str
-        :param      pane:  The pane
+        :param      pane:  target pane
         :type       pane:  str
         """
         if pane:
@@ -236,7 +242,7 @@ class Tmux:
         """
         Captures the last pane to a file or screen
 
-        :param      file:  The file
+        :param      file:  The name of capture file to save
         :type       file:  str
 
         :returns:   pane contents
@@ -255,21 +261,21 @@ class Tmux:
                 print(result.decode('utf-8'))
             return result
 
-    def expect(self, cmd_patt, delay=1):
+    def extract(self, cmd_patt_var, delay=1):
         """
-        Captures
+        Extracts the command contents from a regular expression to a variable list
 
-        :param      cmd_patt:  The command pattern
-        :type       cmd_patt:  command and regular expression
-        :param      delay:     The delay before ending the pipe capture
-        :type       delay:     number
+        :param      cmd_patt_var:  The command pattern
+        :type       cmd_patt_var:  command and regular expression
+        :param      delay:         The delay before ending the pipe capture
+        :type       delay:         number
         """
         pane_str = self._get_pane_str(self.pane_last)
         with tempfile.NamedTemporaryFile() as fobj:
             # Setup the pipe-pane to buffer
             self._cmd("""pipe-pane -t {} -o 'cat > {}' """.format(pane_str, fobj.name))
             # Send the command
-            self.shell(cmd_patt[0])
+            self.shell(cmd_patt_var[0])
             # Wait a bit before closing
             if delay:
                 time.sleep(delay)
@@ -278,9 +284,9 @@ class Tmux:
             # Examine results
             data = fobj.read()
             if data:
-                match = re.search(cmd_patt[1], data.decode('utf-8'))
+                match = re.search(cmd_patt_var[1], data.decode('utf-8'))
                 if match:
-                    for key, val in zip(cmd_patt[2:], match.groups()):
+                    for key, val in zip(cmd_patt_var[2:], match.groups()):
                         self.set_env(key, '{}'.format(val))
 
 
@@ -290,6 +296,14 @@ class PetMux:
     automatically setup a tmux window and run a command sequence in each window
     and pane.  Configurations are loaded from a YAML or JSON file.
     """
+
+    class SequenceException(Exception):
+        """
+        Exception for signaling sequence change
+        """
+        def __init__(self, sequence):
+            self.sequence = sequence
+
 
     def __init__(self, config, session=None, is_debug=True, is_dryrun=False, is_interactive=False):
         """
@@ -301,9 +315,9 @@ class PetMux:
         :type       session:         str
         :param      is_debug:        Indicates if debug
         :type       is_debug:        boolean
-        :param      is_dryrun:       Indicates if dry run
+        :param      is_dryrun:       Indicates if dry run (i.e. echo to shell)
         :type       is_dryrun:       boolean
-        :param      is_interactive:  Indicates if interactive
+        :param      is_interactive:  Indicates if interactive (i.e. single step mode)
         :type       is_interactive:  boolean
         """
         self.config = config
@@ -331,11 +345,14 @@ class PetMux:
             "SPLIT"   : self.tmux.split,
             "DELAY"   : self.tmux.delay,
             "ECHO"    : self.echo,
+            "SEQUENCE": self.sequence,
             "SHELL"   : self.tmux.shell,
-            "EXPECT"  : self.tmux.expect,
+            "EXTRACT" : self.tmux.extract,
             "CAPTURE" : self.tmux.capture,
             "PROMPT"  : self.prompt,
+            "DECIDE"  : self.decide,
             "PAUSE"   : self.pause,
+            "ABORT"   : self.abort,
         }
         # Populate user defines into environment
         if "DEFINES" in self.config.keys():
@@ -377,6 +394,19 @@ class PetMux:
         for win in window:
             self.tmux.kill(win)
 
+    def list(self, sequence=None):
+        """
+        Print the list of available sequences or sequence contents
+
+        :param      sequence:  None - List available sequence, otherwise the
+                               content of sequence
+        """
+        if sequence in self.sequence_list:
+            # print(json.dumps(self.config[sequence], indent=2))
+            print(yaml.dump(self.config[sequence]))
+        else:
+            print(self.sequence_list)
+
     def pause(self, delay=1):
         """
         Wait for delay
@@ -387,6 +417,11 @@ class PetMux:
         if self.is_debug:
             print("Waiting(%d)..." % delay)
         time.sleep(delay)
+
+    def abort(self, return_code):
+        if self.is_debug:
+            print("Aborting with {}".format(return_code))
+        sys.exit(return_code)
 
     def echo(self, message):
         """
@@ -410,12 +445,50 @@ class PetMux:
         if key:
             self.tmux.set_env(key, resp)
 
+    def decide(self, decide_dict):
+        """
+        Changes the program flow based on the results of EXTRACT or PROMPT
+
+        :param      decide_dict:  The decide dictionary
+        :type       decide_dict:  dict
+        """
+        try:
+            # Look for the KEY to make a decision upon
+            key = decide_dict['KEY']
+            # Check if this key has a value
+            value = self.tmux.get_env()[key]
+            if value in self.config:
+                #TODO: Select the next sequence to run
+                print("{}Selected Sequence {}{}".format(MAG, value, NON))
+            elif value in decide_dict:
+                # Invoke the command
+                print("{}Matched {}{}".format(MAG, value, NON))
+                cmd = decide_dict[value]
+                cmd_list = cmd if type(cmd) is list else [cmd]
+                for cmd in cmd_list:
+                    if type(cmd) is dict:
+                        for k, v in cmd.items():
+                            self.key_func_dict[k](v)
+                    else:
+                        self.tmux.shell(cmd)
+        except KeyError as e:
+            print("{}Couldn't resolve {}{}".format(RED, e, NON))
+
+    def sequence(self, sequence):
+        if sequence in self.config:
+            raise PetMux.SequenceException(sequence)
+        else:
+            print("{}No Sequence {} found!{}".format(RED, sequence, NON))
+
     def run(self, sequence):
         """
         Run the selected sequence
 
         :param      sequence:  The sequence dictionary
         :type       sequence:  dict
+
+        :returns:   Next sequence if selected
+        :rtype:     str
         """
         # Step 1: Print title and description if any
         sequence = self.config[sequence]
@@ -465,7 +538,6 @@ class PetMux:
                         self.key_func_dict[key](cmd_dict[key], pane_cnt)
                     elif key in cmd_dict:
                         self.key_func_dict[key](cmd_dict[key],)
-
         # Step 2b: Check if cmds are present to run
         elif 'CMDS' in sequence.keys():
             # Run the commands
@@ -480,39 +552,32 @@ class PetMux:
                     if key in cmd_dict:
                         if self.is_interactive:
                             input("{}  >>> 'Enter' to run[{}]: {} <<<{}".format(YEL, key, cmd_dict[key], NON))
-                        self.key_func_dict[key](cmd_dict[key])
-        # Reset any tmux inter command delays
-        self.tmux.delay(0)
-
-    def list(self, sequence=None):
-        """
-        Print the list of available sequences or sequence contents
-
-        :param      sequence:  None - List available sequence, otherwise the
-                               content of sequence
-        """
-        if sequence in self.sequence_list:
-            # print(json.dumps(self.config[sequence], indent=2))
-            print(yaml.dump(self.config[sequence]))
-        else:
-            print(self.sequence_list)
+                        try:
+                            self.key_func_dict[key](cmd_dict[key])
+                        except PetMux.SequenceException as e:
+                            # A new sequence is request, switch to it.
+                            print("{}Switching sequence to {}{}".format(GRN, e.sequence, NON))
+                            return e.sequence
+        return None
 
 
 def main(args):
     # Process the command line arguments
-    parser = argparse.ArgumentParser(description="PetMux: Program Executing TMUX")
-    parser.add_argument('-f', '--file', action="store", help="input configuration file: --file <your.petmux.config.file>.<json|yaml>>")
+    parser = argparse.ArgumentParser(description="PetMux: Programmed Executive TMUX")
+    parser.add_argument('-r', '--run', action="store", help='Run sequence(s): --run <sequence|"sequence1 [sequence2 ..]">')
+    parser.add_argument('-f', '--file', action="store", default='petmux.yaml', help="input configuration file: --file <your.petmux.config.file>.<yaml|json>>")
     parser.add_argument('-s', '--session', action="store", default=None, help="Specify tmux session: --session <your.session.name>")
-    parser.add_argument('-q', '--quiet', action="store_true", help="Supress debug output")
-    parser.add_argument('-d', '--dryrun', action="store_true", help="Dry run. Print shell commands instead of executing")
-    parser.add_argument('-i', '--interactive', action="store_true", help="Interactively step through the sequence")
     parser.add_argument('-k', '--kill', action="store_true", help="Kill the windows")
-    parser.add_argument('-l', '--list', action="store_true", help="List sequences")
-    parser.add_argument('-r', '--run', action="store", help='Run sequence(s): --run <sequence|"sequence1 sequene2 ..">')
+    parser.add_argument('-l', '--list', action="store_true", help="List available sequences")
+    group_debug = parser.add_argument_group('Debug')
+    group_debug.add_argument('-q', '--quiet', action="store_true", help="Supress debug output")
+    group_debug.add_argument('-d', '--dryrun', action="store_true", help="Dry run. Print shell commands instead of executing")
+    group_debug.add_argument('-i', '--interactive', action="store_true", help="Interactively step through the sequence")
+
     # parser.add_argument('sequence', action='store', default="test", help='Run sequence')
     args = parser.parse_args()
 
-    if args.file:
+    if args.run or args.list:
         # Load the configuration file
         with open(args.file, 'r') as file:
             ext = os.path.splitext(args.file)[1]
@@ -521,16 +586,18 @@ def main(args):
             elif ext == '.json':
                 config = json.load(file)
 
-            # Create PetMux object
             if config:
+                # Create PetMux object
                 pm = PetMux(config, args.session, args.quiet == False, args.dryrun, args.interactive)
+                # Use the petmux object
                 if args.kill:
                     pm.kill()
                 if args.list:
                     pm.list(args.run)
                 elif args.run:
                     for sequence in args.run.split():
-                        pm.run(sequence)
+                        while sequence:
+                            sequence = pm.run(sequence)
     else:
         parser.print_usage()
 
