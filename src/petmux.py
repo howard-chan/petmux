@@ -141,6 +141,24 @@ class Tmux:
         """
         return self.var_dict
 
+    def expand(self, text):
+        """
+        Expands the variable by replacing any '${var}' with matching self.var_dict
+
+        :param      text:  The text
+        :type       text:  str
+
+        :returns:   expanded text
+        :rtype:     str
+        """
+        if text:
+            match = self.pattVAR.findall(text)
+            for var in match:
+                if var in self.var_dict:
+                    text = text.replace("${%s}" % var, self.var_dict[var])
+        return text
+
+
     def kill(self, window):
         """
         Kill the window in the session
@@ -188,19 +206,28 @@ class Tmux:
 
     def pane(self, pane):
         """
-        Selects the tmux pane
+        Selects the tmux pane to be used by shell, capture and extract
 
         :param      pane:  The pane name or number
         :type       pane:  str or int
         """
         if self.is_debug:
             print("{}[ {} ]{}".format(CYN, pane, NON))
-        self.pane_last = pane
         pane = self.window_dict[self.window_last][pane] if pane in self.window_dict[self.window_last] else pane
-        if type(pane) == int:
-            self._cmd('select-pane -t %d' % pane)
+        self.pane_last = pane
+
+    def focus(self, pane):
+        """
+        Selects the tmux pane for user input focus
+
+        :param      pane:  The pane name or number
+        :type       pane:  str or int
+        """
+        self.pane(pane)
+        if type(self.pane_last) == int:
+            self._cmd('select-pane -t %d' % self.pane_last)
         else:
-            print("Error: Unknown pane {}".format(pane))
+            print("Error: Unknown pane {}".format(self.pane_last))
 
     def split(self, options):
         """
@@ -213,7 +240,7 @@ class Tmux:
 
     def shell(self, cmd, pane=None):
         """
-        Sends a shell command or list of shell commands to a pane
+        Sends a shell command or list of shell commands to the last pane
 
         :param      cmd:   The command string
         :type       cmd:   str
@@ -221,15 +248,12 @@ class Tmux:
         :type       pane:  str
         """
         if pane:
-            self.pane_last = pane
+            self.pane(pane)
         cmd_list = cmd if type(cmd) == list else [cmd]
         for cmd in cmd_list:
             pane_str = self._get_pane_str(self.pane_last)
-            # Check for string replacement
-            match = self.pattVAR.findall(cmd)
-            for var in match:
-                if var in self.var_dict:
-                    cmd = cmd.replace("${%s}" % var, self.var_dict[var])
+            # Expand any '${variables}' in the cmd string
+            cmd = self.expand(cmd)
             # NOTE: triple quote required to prevent globbing of environment variables
             if self.is_dryrun:
                 self._cmd("""send-keys "echo -t {} \'{}\'" C-m""".format(pane_str, cmd))
@@ -342,6 +366,7 @@ class PetMux:
             "SESSION" : self.tmux.session,
             "WINDOW"  : self.tmux.window,
             "PANE"    : self.tmux.pane,
+            "FOCUS"   : self.tmux.focus,
             "SPLIT"   : self.tmux.split,
             "DELAY"   : self.tmux.delay,
             "ECHO"    : self.echo,
@@ -359,6 +384,8 @@ class PetMux:
             if self.is_debug:
                 print("Loading environment")
             for key, value in self.config["DEFINES"].items():
+                # Expand any discovered variable
+                value = self.tmux.expand(value)
                 self.tmux.set_env(key, value)
         # Get sequence list (i.e. entries that are not keywords)
         self.sequence_list = list(set(self.config.keys()) - set(self.cfgkey_list))
@@ -532,12 +559,13 @@ class PetMux:
                 pane_cnt += 1
                 # Process the pane commands by the order of key_func_dict.
                 for key in self.key_func_dict.keys():
-                    if key == 'SHELL':
-                        if self.is_interactive:
-                            input("{}  >>> 'Enter' to run[{}]: {} <<<{}".format(YEL, key, cmd_dict[key], NON))
-                        self.key_func_dict[key](cmd_dict[key], pane_cnt)
-                    elif key in cmd_dict:
-                        self.key_func_dict[key](cmd_dict[key],)
+                    if key in cmd_dict:
+                        if key == 'SHELL':
+                            if self.is_interactive:
+                                input("{}  >>> 'Enter' to run[{}]: {} <<<{}".format(YEL, key, cmd_dict[key], NON))
+                            self.key_func_dict[key](cmd_dict[key], pane_cnt)
+                        elif key in cmd_dict:
+                            self.key_func_dict[key](cmd_dict[key],)
         # Step 2b: Check if cmds are present to run
         elif 'CMDS' in sequence.keys():
             # Run the commands

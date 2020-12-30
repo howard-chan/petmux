@@ -2,8 +2,8 @@
 DEFINES:
     # These are environment variables that are set in the tmux environment
     # The are used in the same way you would do in a shell
-    HOME_DIR : ~
-    WORKING_DIR : ~/Documents
+    HOME_DIR : '~'
+    WORKING_DIR : ${HOME_DIR}/Documents
     EDITOR : vi
 
 setup1:
@@ -71,6 +71,14 @@ test:
                 - 'echo "Times Have Changed"'
             '5':
                 SEQUENCE: test2
+        - FOCUS: pane1
+          PAUSE: 1
+        - FOCUS: pane2
+          PAUSE: 1
+        - FOCUS: pane1
+          PAUSE: 1
+        - FOCUS: pane2
+          PAUSE: 1
         - PANE: pane1
           SHELL: echo "P1- That was a pane? ${REPLY}"
 
